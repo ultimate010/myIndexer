@@ -1,0 +1,13 @@
+PROJECT(INDEXer)
+
+CMAKE_MINIMUM_REQUIRED (VERSION 2.6)
+
+
+SET(Boost_USE_STATIC_LIBS ON)
+SET(Boost_USE_MULTITHREADED ON)
+
+ADD_DEFINITIONS(-Wall -O3 -std=c++11)
+
+FIND_PACKAGE(Boost COMPONENTS system serialization log_setup  log filesystem thread REQUIRED)
+
+ADD_SUBDIRECTORY(src)

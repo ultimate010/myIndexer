@@ -24,6 +24,7 @@
 #include <ctime>
 
 
+
 namespace fs = boost::filesystem;
 using namespace std;
 
@@ -48,6 +49,13 @@ map<unsigned short, int> g_char2slice_map;
 
 
 void u16_2_u8(const vector<unsigned short> & utf16line, string & line_out);
+void clean_line(string & line);
+
+void clean_line(string & line) {
+    if (!line.empty() && line[line.size() - 1] == '\r') {
+        line.erase(line.size() - 1);
+    }
+}
 
 bool create_dir(const char * index_path) {
     if (g_rebuild) {
@@ -315,9 +323,7 @@ bool build_index(const char * index_path) {
             string line;
             auto linecount = 0;
             while (std::getline(infile, line)) {
-                if (!line.empty() && line[line.size() - 1] == '\r') {
-                    line.erase(line.size() - 1);
-                }
+                clean_line(line);
                 if (++linecount % 10000 == 0) {
                     LogInfo("Line: %d" , linecount);
                 }
@@ -534,10 +540,10 @@ void search(string & line) {
     vector<string> sout;
     _search(utf16line, sout);
     auto lineNum = 0;
-   for ( auto i: sout) {
-       lineNum++;
-       cout <<"Line " <<lineNum <<": " << i <<endl;
-   }
+    for ( auto i: sout) {
+        lineNum++;
+        cout <<"Line " <<lineNum <<": " << i <<endl;
+    }
 }
 void search_loop() {
     while(true) {
@@ -547,6 +553,7 @@ void search_loop() {
         search(sin);
     }
 }
+
 
 int main(int argc, char ** argv) {
     try {

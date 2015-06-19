@@ -9,6 +9,7 @@
 #include <leveldb/db.h>
 #include "boost_logger.hpp"
 #include "utf8.h"
+#include "logger.hpp"
 #include <boost/filesystem.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/ini_parser.hpp>
@@ -54,9 +55,9 @@ bool create_dir(const char * index_path) {
     }
     if (!fs::exists(index_path)) {
         fs::create_directory(index_path);
-        BOOST_LOG_TRIVIAL(info) << "Creating: " << index_path <<" dir";
+        LogInfo("Creating: %s dir", index_path);
     } else {
-        BOOST_LOG_TRIVIAL(info) << "Use " << index_path <<" dir";
+        LogInfo("Use %s dir" , index_path);
     }
     return true;
 }
@@ -68,7 +69,7 @@ template<class ty> void compose_data_name(const ty & outfile_index, string & out
 }
 
 template<class ty1, class ty2> void compose_slice_key(const ty1 & key1, const ty2 & key2, string & keyName) {
-    keyName = str( boost::format("%09d_%04d") % key1 % key2); // From 0 to N
+    keyName = str( boost::format("%#05d_%04d") % key1 % key2); // From 0 to N
 }
 
 void find_section(vector < pair < int, long > > & A,
@@ -159,7 +160,7 @@ bool get_all_file(const char * path, vector<string> & vs) {
         }
         return true;
     } catch (exception& e) {
-        BOOST_LOG_TRIVIAL(fatal) << e.what();
+        LogFatal(e.what());
         return false;
     }
 }
@@ -228,7 +229,7 @@ void write_slice_record(map<unsigned short, int> & char2count_map,
         save_db(keyName, out);  // Save the vector to db
         ptr->clear();
     } catch (exception& e) {
-        BOOST_LOG_TRIVIAL(fatal) << e.what();
+        LogFatal(e.what());
     }
 }
 
@@ -272,7 +273,7 @@ bool build_index(const char * index_path) {
         fs::path full_path = dir / file;
         ofstream fidx(full_path.string(), ios::binary);
         if (!fidx) {
-            BOOST_LOG_TRIVIAL(fatal) << "Can not open " << full_path.string();
+            LogFatal("Can not open %s", full_path.string().c_str());
         }
         map<int, string> id2file_map;
         map<string, int> file2id_map;
@@ -300,7 +301,7 @@ bool build_index(const char * index_path) {
         write_string_record(fidx, out);
 
         for (auto filename: vs) {
-            BOOST_LOG_TRIVIAL(info) << "Indexing :" << filename;
+            LogInfo("Indexing : %s" , filename.c_str());
 
             if (outfile_index == 0) {
                 doc2startpos_map[file2id_map[filename]] = make_pair(outfile_index, writer_pos);
@@ -318,7 +319,7 @@ bool build_index(const char * index_path) {
                     line.erase(line.size() - 1);
                 }
                 if (++linecount % 10000 == 0) {
-                    BOOST_LOG_TRIVIAL(info) << "Line: " << linecount;
+                    LogInfo("Line: %d" , linecount);
                 }
                 vector<unsigned short> utf16line;
                 u8_2_u16(line, utf16line);
@@ -369,7 +370,7 @@ bool build_index(const char * index_path) {
 
         return true;
     } catch (exception& e) {
-        BOOST_LOG_TRIVIAL(fatal) << e.what();
+        LogFatal(e.what());
         return false;
     }
 }
@@ -388,9 +389,9 @@ bool read_index(const char * index_path) {
         fs::path full_path = dir / file;
         ifstream fidx(full_path.string(), ios::binary);
         if (!fidx) {
-            BOOST_LOG_TRIVIAL(fatal) << "Can not open " << full_path.string();
+            LogFatal("Can not open %s" , full_path.string().c_str());
         }
-        BOOST_LOG_TRIVIAL(info) << "Reading index " << full_path.string();
+        LogInfo("Reading index %s ", full_path.string().c_str());
         read_obj(fidx, g_docs);
         read_obj(fidx, g_id2file_map);
         read_obj(fidx, g_file2id_map);
@@ -420,7 +421,7 @@ bool read_index(const char * index_path) {
 
         return true;
     } catch (exception& e) {
-        BOOST_LOG_TRIVIAL(fatal) << e.what();
+        LogFatal(e.what());
         return false;
     }
 }
@@ -454,7 +455,7 @@ void get_slice_vec(const unsigned short & ch, vector< pair < int, long > > & vc)
             vc.reserve( vc.size() + tv.size() );                // preallocate memory without erase original data
             vc.insert( vc.end(), tv.begin(), tv.end() );
         } else {
-            BOOST_LOG_TRIVIAL(fatal) << "No in db";
+            LogFatal("No in db");
         }
     }
 }
@@ -483,7 +484,7 @@ void _get_doc(pair<int, long> doc_pos, string & st, const int & len) {
     vector<unsigned short> vc;
     ifstream fin(filename);
     if (!fin) {
-        BOOST_LOG_TRIVIAL(fatal) << "Not open " << filename;
+        LogFatal("Not open %s" , filename.c_str());
     }
     fin.seekg(start_pos);
     unsigned short ch;
@@ -495,23 +496,20 @@ void _get_doc(pair<int, long> doc_pos, string & st, const int & len) {
         }
         vc.push_back(ch);
     }
-    cout << "Str len " << vc.size() <<" " <<start_pos  <<" : " <<end_pos <<endl;
+    // cout << "Str len " << vc.size() <<" " <<start_pos  <<" : " <<end_pos <<endl;
     u16_2_u8(vc, st);
 }
 
 void _get_string_from_doc_pos(vector<pair<int, long> > doc_pos, vector<string> & sout, const int & len) {
-    auto count = 0;
     for (auto pos: doc_pos) {
         string st;
         _get_doc(pos, st, len);
         sout.push_back(st);
-        count ++ ;
-        cout <<"Find " <<count <<" " << st <<endl;
+        // cout <<"Find " <<count <<" " << st <<endl;
     }
 }
 
 void _search(const vector<unsigned short> & utf16line, vector<string> & sout) {
-    set<pair<int, long>> viewset;
     vector<pair<int, long>> A, B, C;
     bool first = true;
     for (auto ch: utf16line) {
@@ -535,11 +533,11 @@ void search(string & line) {
     u8_2_u16(line, utf16line);
     vector<string> sout;
     _search(utf16line, sout);
-    /*
-       for ( auto i: sout) {
-       cout << i <<endl;
-       }
-       */
+    auto lineNum = 0;
+   for ( auto i: sout) {
+       lineNum++;
+       cout <<"Line " <<lineNum <<": " << i <<endl;
+   }
 }
 void search_loop() {
     while(true) {
@@ -552,18 +550,20 @@ void search_loop() {
 
 int main(int argc, char ** argv) {
     try {
-        g_InitLog();
         load_config(argv[1]);
+
+        g_InitLog();
         init_db(g_db_path, &g_db);
 
         if (g_rebuild) {
             build_index(g_index_path.c_str());
         }
+
         read_index(g_index_path.c_str());
 
         search_loop();
 
     } catch (exception& e) {
-        BOOST_LOG_TRIVIAL(fatal) << e.what();
+        LogFatal(e.what());
     }
 }

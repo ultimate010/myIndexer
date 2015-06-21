@@ -7,7 +7,7 @@
 #include <cassert>
 #include <set>
 #include <leveldb/db.h>
-#include "boost_logger.hpp"
+// #include "boost_logger.hpp"
 #include "utf8.h"
 #include "logger.hpp"
 #include <boost/filesystem.hpp>
@@ -43,13 +43,15 @@ map<int, string> g_id2file_map;
 map<string, int> g_file2id_map;
 map<string, pair<int,long> > g_file2dataid_pos_map;
 map<int, pair<int, long > > g_doc2startpos_map;
-map<unsigned short, int> g_char2slice_map;
+map<string, int> g_char2slice_map;
 
 
 
 
 void u16_2_u8(const vector<unsigned short> & utf16line, string & line_out);
+string ch_2_u8(unsigned short ch);
 void clean_line(string & line);
+template<class type> void compose_data_name(const type & outfile_index, string & outFileName);
 
 void clean_line(string & line) {
     if (!line.empty() && line[line.size() - 1] == '\r') {
@@ -70,20 +72,22 @@ bool create_dir(const char * index_path) {
     return true;
 }
 
-template<class ty> void compose_data_name(const ty & outfile_index, string & outFileName) {
+template<class type> void compose_data_name(const type & outfile_index, string & outFileName) {
     fs::path dir(g_index_path);
-    outFileName = str( boost::format("DATA_%06d") % outfile_index );
+    outFileName = str( boost::format("DATA_%#05x") % outfile_index );
     outFileName = (dir / fs::path(outFileName)).string();
 }
 
-template<class ty1, class ty2> void compose_slice_key(const ty1 & key1, const ty2 & key2, string & keyName) {
-    keyName = str( boost::format("%#05d_%04d") % key1 % key2); // From 0 to N
+template<class type1, class type2> void compose_two_key(const type1 & key1, const type2 & key2, string & keyName) {
+    keyName = str( boost::format("%d_%#05x_%#05x") % key1 % key1 % key2); // From 0 to N
 }
-
+template<class type1, class type2> void compose_slice_key(const type1 & key1, const type2 & key2, string & keyName) {
+    keyName = str( boost::format("%s_%#05x") % key1 % key2); // From 0 to N
+}
 void find_section(vector < pair < int, long > > & A,
-                  vector < pair < int, long > > & B,
-                  vector < pair < int, long > > & C,
-                  int pos=1) {
+        vector < pair < int, long > > & B,
+        vector < pair < int, long > > & C,
+        int pos=1) {
     auto i = 0l;
     auto j = 0l;
     C.clear();
@@ -187,12 +191,12 @@ void read_string_record(ifstream & ifs, stringstream & istr) {
     istr.write(tmp.get(), count);
 }
 
-template <class ty1 > void str_2_obj(stringstream & in, ty1 & out) {
+template <class type1 > void str_2_obj(stringstream & in, type1 & out) {
     boost::archive::binary_iarchive ia(in);
     ia >> out;
 }
 
-template <class ty1, class ty2> void set_or_plus(ty1 & m, const ty2 & k) {
+template <class type1, class type2> void set_or_plus(type1 & m, const type2 & k) {
     if (m.find(k) != m.end()) {
         m[k] = m[k] + 1;
     } else {
@@ -201,20 +205,20 @@ template <class ty1, class ty2> void set_or_plus(ty1 & m, const ty2 & k) {
 }
 
 
-template <class ty1, class ty2, class ty3> void set_or_pushback(ty1 & m,
-        const ty2 & k,
-        const ty3 & v) {
+template <class type1, class type2, class type3> void set_or_pushback(type1 & m,
+        const type2 & k,
+        const type3 & v) {
     if (m.find(k) != m.end()) {
-        m[k]->push_back(v);
+        m[k].push_back(v);
     } else {
-        shared_ptr<vector<pair<int, long> > > ptr(new vector<pair<int, long> >(SLICE_WRITE_SIZE));
-        m[k] = ptr;
-        m[k]->push_back(v);
+        vector< pair<int, long> > vc;
+        m[k] = vc;
+        m[k].push_back(v);
     }
 }
 
 
-template <class ty1> void obj_2_str(const ty1 & in, string & out) {
+template <class type1> void obj_2_str(const type1 & in, string & out) {
     stringstream ostr;
     boost::archive::binary_oarchive oa(ostr);
     oa << in;
@@ -222,20 +226,20 @@ template <class ty1> void obj_2_str(const ty1 & in, string & out) {
 }
 
 
-void write_slice_record(map<unsigned short, int> & char2count_map,
-                        map<unsigned short, int> & char2slice_map,
-                        map<unsigned short, shared_ptr< vector < pair <int, long> > > > & char2pos_map,
-                        const unsigned short & key) {
+template <class type1, class type2, class type3, class type4> void write_slice_record(type1 & char2count_map,
+        type2 & char2slice_map,
+        type3 & char2pos_map,
+        type4 & key) {
     try {
         char2count_map[key] = 0;
-        shared_ptr<vector < pair <int, long> > > ptr = char2pos_map[key];
+        vector < pair<int, long> > & ref = char2pos_map[key];
         string out;
-        obj_2_str<vector <pair <int, long > > > (*ptr, out);
+        obj_2_str<vector <pair <int, long > > > (ref, out);
         set_or_plus(char2slice_map, key);
         string keyName;  // From 0 to N
-        compose_slice_key<unsigned short, int >(key, char2slice_map[key], keyName);
+        compose_slice_key(key, char2slice_map[key], keyName);
         save_db(keyName, out);  // Save the vector to db
-        ptr->clear();
+        ref.clear();
     } catch (exception& e) {
         LogFatal(e.what());
     }
@@ -249,13 +253,12 @@ string ch_2_u8(unsigned short ch) {
     return s;
 }
 
-void clear_write(map<unsigned short, shared_ptr < vector<pair<int, long> > > > & char2pos_map,
-                 map<unsigned short, int> & char2count_map,
-                 map<unsigned short, int> & char2slice_map
-                ) {
-    for (auto u16char: char2pos_map) {
-        // cout <<"Clear write " << ch_2_u8(u16char.first) <<" size: " << u16char.second.get()->size() <<endl;
-        write_slice_record(char2count_map, char2slice_map, char2pos_map, u16char.first);
+template <class type1, class type2> void clear_write(type1 & char2pos_map,
+        type2 & char2count_map,
+        type2 & char2slice_map
+        ) {
+    for (auto it: char2pos_map) {
+        write_slice_record(char2count_map, char2slice_map, char2pos_map, it.first);
     }
 }
 
@@ -286,10 +289,11 @@ bool build_index(const char * index_path) {
         map<int, string> id2file_map;
         map<string, int> file2id_map;
         map<string, pair<int,long> > file2dataid_pos_map;
-        map<unsigned short, shared_ptr < vector<pair<int, long> > > > char2pos_map; // char to <doc_id, doc_offset>
-        map<unsigned short, int> char2count_map;  // Current char times count, use for write db count
-        map<unsigned short, int> char2slice_map;  // Slice count from like A_0 A_1 A_2 the N of A_N
         map<int, pair<int, long > > doc2startpos_map;  // The pos which doc data store in data file  <data_file_id, pos>
+
+        map<string, vector< pair<int, long> > > char2pos_map; // char_char to <doc_id, doc_offset>
+        map<string, int> char2count_map;  // Current char_char times count, use for write db count
+        map<string, int> char2slice_map;  // Slice count from like A_A_0 A_A_1 A_B_0 
 
         int count = 0;
         for (auto it: vs) {
@@ -327,17 +331,30 @@ bool build_index(const char * index_path) {
                 if (++linecount % 10000 == 0) {
                     LogInfo("Line: %d" , linecount);
                 }
+
                 vector<unsigned short> utf16line;
                 u8_2_u16(line, utf16line);
+                unsigned short pre_ch = 0xFF;
+
                 for (auto u16char: utf16line) {
-                    // every char
-                    set_or_plus(char2count_map, u16char);
-                    set_or_pushback(char2pos_map, u16char, make_pair(file2id_map[filename], char_offset) );
-                    // char 2 vector<<doc_id, doc_offset>
-                    if (char2count_map[u16char] >= SLICE_WRITE_SIZE ) {
-                        // write slice
-                        // cout <<"Write " << ch_2_u8(u16char) <<" " <<endl;
-                        write_slice_record(char2count_map, char2slice_map, char2pos_map, u16char);
+                    string new_key;
+                    
+                    compose_two_key(pre_ch, u16char, new_key);
+                    {
+                        set_or_plus(char2count_map, new_key);
+                        set_or_pushback(char2pos_map, new_key, make_pair(file2id_map[filename], char_offset) );
+                        if (char2count_map[new_key] >= SLICE_WRITE_SIZE ) {
+                            write_slice_record(char2count_map, char2slice_map, char2pos_map, new_key);
+                        }
+                    }
+                    if (pre_ch != 0xFF)
+                    {
+                        compose_two_key(0xFF, u16char, new_key);
+                        set_or_plus(char2count_map, new_key);
+                        set_or_pushback(char2pos_map, new_key, make_pair(file2id_map[filename], char_offset) );
+                        if (char2count_map[new_key] >= SLICE_WRITE_SIZE ) {
+                            write_slice_record(char2count_map, char2slice_map, char2pos_map, new_key);
+                        }
                     }
                     if (outfile_count >= DATA_MAX_SIZE) {
                         // Create new file
@@ -349,10 +366,12 @@ bool build_index(const char * index_path) {
                         outfile.open(outFileName);
                         outfile_index++;
                     }
+
                     outfile.write(reinterpret_cast<char *>(&u16char),  g_ch_size);  // write char to file
                     outfile_count += g_ch_size;
                     writer_pos += g_ch_size;
                     char_offset++;
+                    pre_ch = u16char;
                 }
             }
         }
@@ -371,7 +390,7 @@ bool build_index(const char * index_path) {
 
         clear_write(char2pos_map, char2count_map, char2slice_map);  // Write the last bucket to the db
 
-        obj_2_str< map<unsigned short, int>  > (char2slice_map, out);
+        obj_2_str< map<string, int>  > (char2slice_map, out);
         write_string_record(fidx, out);
 
         return true;
@@ -381,7 +400,7 @@ bool build_index(const char * index_path) {
     }
 }
 
-template <class ty1> void read_obj(ifstream & fin, ty1 & obj) {
+template <class type1> void read_obj(ifstream & fin, type1 & obj) {
     stringstream sbuf;
     read_string_record(fin, sbuf);
     str_2_obj(sbuf, obj);
@@ -404,27 +423,6 @@ bool read_index(const char * index_path) {
         read_obj(fidx, g_file2dataid_pos_map);
         read_obj(fidx, g_doc2startpos_map);
         read_obj(fidx, g_char2slice_map);
-
-        /*
-           for (auto it: g_id2file_map){
-           cout << it.first <<" " << it.second <<endl;
-           }
-           for (auto it: g_file2id_map){
-           cout << it.first <<" " << it.second <<endl;
-           }
-           for (auto it: g_file2dataid_pos_map){
-           cout <<"file2dataid_pos_map" << it.first <<" " << it.second.first << " " << it.second.second <<endl;
-           }
-
-           for (auto it: g_doc2startpos_map){
-           cout <<"doc2startpos_map" << it.first <<" " << it.second.first << " " << it.second.second <<endl;
-           }
-
-           for (auto it: g_char2slice_map){
-           cout <<"char2slice_map" << it.first  << " " << it.second <<endl;
-           }
-           */
-
         return true;
     } catch (exception& e) {
         LogFatal(e.what());
@@ -444,15 +442,14 @@ void load_config(const char * path) {
     g_offset = pt.get<int>("all.return_windows") * g_ch_size;
 }
 
-void get_slice_vec(const unsigned short & ch, vector< pair < int, long > > & vc) {
+void get_slice_vec(const string & ch, vector< pair < int, long > > & vc) {
     vc.clear();
     if (g_char2slice_map.find(ch) == g_char2slice_map.end()) {
         return ;  // Not in
     }
     for(int i = 0; i <= g_char2slice_map[ch]; i++) {
-        // cout << ch_2_u8(ch) << " " <<i <<endl;
         string keyName;
-        compose_slice_key<unsigned short, int >(ch, i, keyName);
+        compose_slice_key(ch, i, keyName);
         string value;
         if(get_db(keyName, value)) {
             vector<pair<int, long>> tv;
@@ -466,7 +463,7 @@ void get_slice_vec(const unsigned short & ch, vector< pair < int, long > > & vc)
     }
 }
 
-template <class ty> void _compute_true_doc_pos(pair<int, long> & dat_pos, const ty & pos) {
+template <class type> void _compute_true_doc_pos(pair<int, long> & dat_pos, const type & pos) {
     auto true_pos = (dat_pos.second + pos * g_ch_size);
     auto doc_offset = true_pos / DATA_MAX_SIZE;
     dat_pos.second = true_pos % DATA_MAX_SIZE;
@@ -518,16 +515,21 @@ void _get_string_from_doc_pos(vector<pair<int, long> > doc_pos, vector<string> &
 void _search(const vector<unsigned short> & utf16line, vector<string> & sout) {
     vector<pair<int, long>> A, B, C;
     bool first = true;
+    unsigned short pre_ch = 0xFF;
+
     for (auto ch: utf16line) {
+        string new_key;
+        compose_two_key(pre_ch, ch, new_key);
+        pre_ch = ch;
         if (first) {
             first = false;
-            get_slice_vec(ch, A);  // The first run
+            get_slice_vec(new_key, A);  // The first run
             continue;
         }
         if (A.size() == 0) {
             break; // Not found
         }
-        get_slice_vec(ch, B);
+        get_slice_vec(new_key, B);
         find_section(A, B, C);
         A = C;
     }
@@ -559,7 +561,7 @@ int main(int argc, char ** argv) {
     try {
         load_config(argv[1]);
 
-        g_InitLog();
+        // g_InitLog();
         init_db(g_db_path, &g_db);
 
         if (g_rebuild) {
